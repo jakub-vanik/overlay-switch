@@ -124,9 +124,10 @@ def create_workdir(path):
 
 
 def remove_workdir(path):
-  inner_path = os.path.join(path, "work")
-  if os.path.isdir(inner_path):
-    subprocess.run(["sudo", "rmdir", inner_path], check=True)
+  for name in os.listdir(path):
+    inner_path = os.path.join(path, name)
+    if os.path.isdir(inner_path):
+      subprocess.run(["sudo", "rmdir", inner_path], check=True)
   os.rmdir(path)
 
 
