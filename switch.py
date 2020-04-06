@@ -6,8 +6,21 @@ import shutil
 import subprocess
 import sys
 
-products_root = os.environ["SWITCH_PRODUCTS_ROOT"].rstrip("/")
-storage_root = os.environ["SWITCH_STORAGE_ROOT"].rstrip("/")
+
+def load_environment():
+  global products_root, storage_root
+  try:
+    products_root = os.environ["SWITCH_PRODUCTS_ROOT"].rstrip("/")
+    storage_root = os.environ["SWITCH_STORAGE_ROOT"].rstrip("/")
+  except KeyError:
+    raise Exception("environment variables not set")
+
+
+def get_argument(index):
+  if len(sys.argv) > index:
+    return sys.argv[index]
+  else:
+    raise Exception("not enough arguments")
 
 
 def check_product(product):
@@ -292,68 +305,72 @@ def undo(product, version):
 
 
 def main():
-  command = sys.argv[1]
-  if command == "create":
-    product = sys.argv[2]
-    version = sys.argv[3]
-    check_product(product)
-    create(product, version)
-    return
-  if command == "duplicate":
-    product = sys.argv[2]
-    version = sys.argv[3]
-    parent = sys.argv[4]
-    check_product(product)
-    duplicate(product, version, parent)
-    return
-  if command == "delete":
-    product = sys.argv[2]
-    version = sys.argv[3]
-    check_product(product)
-    delete(product, version)
-    return
-  if command == "derive":
-    product = sys.argv[2]
-    version = sys.argv[3]
-    parent = sys.argv[4]
-    check_product(product)
-    derive(product, version, parent)
-    return
-  if command == "detach":
-    product = sys.argv[2]
-    version = sys.argv[3]
-    check_product(product)
-    detach(product, version)
-    return
-  if command == "select":
-    product = sys.argv[2]
-    version = sys.argv[3]
-    check_product(product)
-    select(product, version)
-    return
-  if command == "unselect":
-    product = sys.argv[2]
-    check_product(product)
-    unselect(product)
-    return
-  if command == "which":
-    product = sys.argv[2]
-    check_product(product)
-    which(product)
-    return
-  if command == "commit":
-    product = sys.argv[2]
-    version = sys.argv[3]
-    check_product(product)
-    commit(product, version)
-    return
-  if command == "undo":
-    product = sys.argv[2]
-    version = sys.argv[3]
-    check_product(product)
-    undo(product, version)
-    return
-  raise Exception("unknown command")
+  try:
+    load_environment()
+    command = get_argument(1)
+    if command == "create":
+      product = get_argument(2)
+      version = get_argument(3)
+      check_product(product)
+      create(product, version)
+      return
+    if command == "duplicate":
+      product = get_argument(2)
+      version = get_argument(3)
+      parent = get_argument(4)
+      check_product(product)
+      duplicate(product, version, parent)
+      return
+    if command == "delete":
+      product = get_argument(2)
+      version = get_argument(3)
+      check_product(product)
+      delete(product, version)
+      return
+    if command == "derive":
+      product = get_argument(2)
+      version = get_argument(3)
+      parent = get_argument(4)
+      check_product(product)
+      derive(product, version, parent)
+      return
+    if command == "detach":
+      product = get_argument(2)
+      version = get_argument(3)
+      check_product(product)
+      detach(product, version)
+      return
+    if command == "select":
+      product = get_argument(2)
+      version = get_argument(3)
+      check_product(product)
+      select(product, version)
+      return
+    if command == "unselect":
+      product = get_argument(2)
+      check_product(product)
+      unselect(product)
+      return
+    if command == "which":
+      product = get_argument(2)
+      check_product(product)
+      which(product)
+      return
+    if command == "commit":
+      product = get_argument(2)
+      version = get_argument(3)
+      check_product(product)
+      commit(product, version)
+      return
+    if command == "undo":
+      product = get_argument(2)
+      version = get_argument(3)
+      check_product(product)
+      undo(product, version)
+      return
+    raise Exception("unknown command")
+  except Exception as e:
+    print("Error: " + str(e))
 
 
 if __name__ == "__main__":
