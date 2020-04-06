@@ -41,8 +41,8 @@ def read_mounts():
     line = buff.decode("utf-8").strip()
     result = regex.search(line)
     if result:
-      mount_pount = result.group(1)
-      base, product = os.path.split(mount_pount)
+      mount_point = result.group(1)
+      base, product = os.path.split(mount_point)
       if base == products_root:
         upper_path = result.group(3)
         upper_product, upper_version = extract_path(upper_path)
