@@ -16,6 +16,21 @@ def load_environment():
     raise Exception("environment variables not set")
 
 
+def is_sub_path(sub_path, path):
+  while sub_path:
+    if sub_path == path:
+      return True
+    sub_path, name = os.path.split(sub_path)
+    if not name:
+      return False
+  return False
+
+
+def check_roots():
+  if is_sub_path(products_root, storage_root):
+    raise Exception("products root colides with storage")
+
+
 def get_argument(index):
   if len(sys.argv) > index:
     return sys.argv[index]
@@ -24,7 +39,10 @@ def get_argument(index):
 
 
 def check_product(product):
-  if not os.path.isdir(os.path.join(products_root, product)):
+  product_path = os.path.join(products_root, product)
+  if is_sub_path(product_path, storage_root):
+    raise Exception("product colides with storage")
+  if not os.path.isdir(product_path):
     raise Exception("product not found")
   product_path = os.path.join(storage_root, product)
   if not os.path.isdir(product_path):
@@ -308,6 +326,7 @@ def undo(product, version):
 def main():
   try:
     load_environment()
+    check_roots()
     command = get_argument(1)
     if command == "create":
       product = get_argument(2)
