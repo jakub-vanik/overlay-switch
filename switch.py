@@ -31,6 +31,18 @@ def check_roots():
     raise Exception("products root colides with storage")
 
 
+def umount_failed():
+  regex = re.compile("^overlay on (.*) type overlay \(.*\)$")
+  process = subprocess.Popen(["mount"], stdout=subprocess.PIPE)
+  for buff in process.stdout:
+    line = buff.decode("utf-8").strip()
+    result = regex.search(line)
+    if result:
+      mount_point = result.group(1)
+      if is_sub_path(mount_point, storage_root):
+        subprocess.run(["sudo", "umount", mount_point], check=True)
+
+
 def get_argument(index):
   if len(sys.argv) > index:
     return sys.argv[index]
@@ -327,6 +339,7 @@ def main():
   try:
     load_environment()
     check_roots()
+    umount_failed()
     command = get_argument(1)
     if command == "create":
       product = get_argument(2)
