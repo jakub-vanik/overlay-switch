@@ -31,7 +31,21 @@ def check_roots():
     raise Exception("products root colides with storage")
 
 
-def umount_failed():
+def get_argument(index):
+  if len(sys.argv) > index:
+    return sys.argv[index]
+  else:
+    raise Exception("not enough arguments")
+
+
+def create_product(product):
+  product_path = os.path.join(storage_root, product)
+  if not os.path.isdir(product_path):
+    os.makedirs(product_path)
+
+
+def umount_failed(product):
+  product_path = os.path.join(storage_root, product)
   regex = re.compile("^overlay on (.*) type overlay \(.*\)$")
   process = subprocess.Popen(["mount"], stdout=subprocess.PIPE)
   for buff in process.stdout:
@@ -39,15 +53,8 @@ def umount_failed():
     result = regex.search(line)
     if result:
       mount_point = result.group(1)
-      if is_sub_path(mount_point, storage_root):
+      if is_sub_path(mount_point, product_path):
         subprocess.run(["sudo", "umount", mount_point], check=True)
-
-
-def get_argument(index):
-  if len(sys.argv) > index:
-    return sys.argv[index]
-  else:
-    raise Exception("not enough arguments")
 
 
 def check_product(product):
@@ -56,9 +63,8 @@ def check_product(product):
     raise Exception("product colides with storage")
   if not os.path.isdir(product_path):
     raise Exception("product not found")
-  product_path = os.path.join(storage_root, product)
-  if not os.path.isdir(product_path):
-    os.makedirs(product_path)
+  create_product(product)
+  umount_failed(product)
 
 
 def version_exists(product, version):
@@ -339,7 +345,6 @@ def main():
   try:
     load_environment()
     check_roots()
-    umount_failed()
     command = get_argument(1)
     if command == "create":
       product = get_argument(2)
