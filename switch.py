@@ -1,10 +1,34 @@
 #!/usr/bin/python3
 
+import fcntl
 import os
 import re
 import shutil
 import subprocess
 import sys
+
+
+class Lock:
+
+  def __init__(self, product):
+    lock_path = os.path.join(storage_root, product, ".lock")
+    self.lock_file = open(lock_path, "a")
+    self.lock_file.seek(0)
+
+  def __enter__(self):
+    try:
+      fcntl.flock(self.lock_file, fcntl.LOCK_EX | fcntl.LOCK_NB)
+      self.lock_file.write(str(os.getpid()))
+      self.lock_file.flush()
+    except BlockingIOError:
+      raise Exception("other operation in progress")
+    return self
+
+  def __exit__(self, exc_type, exc_value, traceback):
+    self.lock_file.truncate(0)
+    self.lock_file.flush()
+    fcntl.flock(self.lock_file, fcntl.LOCK_UN)
+    self.lock_file.close()
 
 
 def load_environment():
@@ -44,7 +68,16 @@ def create_product(product):
     os.makedirs(product_path)
 
 
-def umount_failed(product):
+def check_product(product):
+  product_path = os.path.join(products_root, product)
+  if is_sub_path(product_path, storage_root):
+    raise Exception("product colides with storage")
+  if not os.path.isdir(product_path):
+    raise Exception("product not found")
+  create_product(product)
+
+
+def check_failed(product):
   product_path = os.path.join(storage_root, product)
   regex = re.compile("^overlay on (.*) type overlay \(.*\)$")
   process = subprocess.Popen(["mount"], stdout=subprocess.PIPE)
@@ -55,16 +88,6 @@ def umount_failed(product):
       mount_point = result.group(1)
       if is_sub_path(mount_point, product_path):
         subprocess.run(["sudo", "umount", mount_point], check=True)
-
-
-def check_product(product):
-  product_path = os.path.join(products_root, product)
-  if is_sub_path(product_path, storage_root):
-    raise Exception("product colides with storage")
-  if not os.path.isdir(product_path):
-    raise Exception("product not found")
-  create_product(product)
-  umount_failed(product)
 
 
 def version_exists(product, version):
@@ -204,141 +227,175 @@ def recreate_empty(path):
 
 
 def create(product, version):
-  if version_exists(product, version):
-    raise Exception("version already exists")
-  version_path = os.path.join(storage_root, product, version)
-  os.makedirs(version_path)
-  os.makedirs(os.path.join(version_path, "lower"))
-  os.makedirs(os.path.join(version_path, "upper"))
+  check_product(product)
+  with Lock(product):
+    check_failed(product)
+    if version_exists(product, version):
+      raise Exception("version already exists")
+    version_path = os.path.join(storage_root, product, version)
+    os.makedirs(version_path)
+    os.makedirs(os.path.join(version_path, "lower"))
+    os.makedirs(os.path.join(version_path, "upper"))
 
 
 def duplicate(product, version, parent):
-  if not version_exists(product, parent):
-    raise Exception("parent does not exist")
-  create(product, version)
-  write_parent(product, version, read_parent(product, parent))
-  version_path = os.path.join(storage_root, product, version)
-  src_work_path = os.path.join(version_path, ".src_work")
-  src_mount_path = os.path.join(version_path, ".src_mount")
-  dst_work_path = os.path.join(version_path, ".dst_work")
-  dst_mount_path = os.path.join(version_path, ".dst_mount")
-  os.makedirs(src_mount_path, exist_ok=True)
-  os.makedirs(dst_mount_path, exist_ok=True)
-  mount_overlay(src_mount_path, src_work_path, product, parent, lower_only=True)
-  mount_overlay(dst_mount_path, dst_work_path, product, version, write_lower=True)
-  try:
-    rsync(src_mount_path, dst_mount_path)
-  finally:
-    umount_overlay(src_mount_path, src_work_path)
-    umount_overlay(dst_mount_path, dst_work_path)
-    os.rmdir(src_mount_path)
-    os.rmdir(dst_mount_path)
+  check_product(product)
+  with Lock(product):
+    check_failed(product)
+    if not version_exists(product, parent):
+      raise Exception("parent does not exist")
+    version_path = os.path.join(storage_root, product, version)
+    os.makedirs(version_path)
+    os.makedirs(os.path.join(version_path, "lower"))
+    os.makedirs(os.path.join(version_path, "upper"))
+    write_parent(product, version, read_parent(product, parent))
+    src_work_path = os.path.join(version_path, ".src_work")
+    src_mount_path = os.path.join(version_path, ".src_mount")
+    dst_work_path = os.path.join(version_path, ".dst_work")
+    dst_mount_path = os.path.join(version_path, ".dst_mount")
+    os.makedirs(src_mount_path, exist_ok=True)
+    os.makedirs(dst_mount_path, exist_ok=True)
+    mount_overlay(src_mount_path, src_work_path, product, parent, lower_only=True)
+    mount_overlay(dst_mount_path, dst_work_path, product, version, write_lower=True)
+    try:
+      rsync(src_mount_path, dst_mount_path)
+    finally:
+      umount_overlay(src_mount_path, src_work_path)
+      umount_overlay(dst_mount_path, dst_work_path)
+      os.rmdir(src_mount_path)
+      os.rmdir(dst_mount_path)
 
 
 def delete(product, version):
-  if not version_exists(product, version):
-    raise Exception("version does not exist")
-  if is_version_used(product, version):
-    raise Exception("version is in use, unselect first")
-  if is_parent(product, version):
-    raise Exception("version is parent, detach first")
-  shutil.rmtree(os.path.join(storage_root, product, version))
+  check_product(product)
+  with Lock(product):
+    check_failed(product)
+    if not version_exists(product, version):
+      raise Exception("version does not exist")
+    if is_version_used(product, version):
+      raise Exception("version is in use, unselect first")
+    if is_parent(product, version):
+      raise Exception("version is parent, detach first")
+    shutil.rmtree(os.path.join(storage_root, product, version))
 
 
 def derive(product, version, parent):
-  if not version_exists(product, parent):
-    raise Exception("parent does not exist")
-  create(product, version)
-  write_parent(product, version, parent)
+  check_product(product)
+  with Lock(product):
+    check_failed(product)
+    if not version_exists(product, parent):
+      raise Exception("parent does not exist")
+    version_path = os.path.join(storage_root, product, version)
+    os.makedirs(version_path)
+    os.makedirs(os.path.join(version_path, "lower"))
+    os.makedirs(os.path.join(version_path, "upper"))
+    write_parent(product, version, parent)
 
 
 def detach(product, version):
-  if not version_exists(product, version):
-    raise Exception("version does not exist")
-  if is_version_used(product, version):
-    raise Exception("version is in use, unselect first")
-  if not read_parent(product, version):
-    raise Exception("version does not have parent")
-  version_path = os.path.join(storage_root, product, version)
-  new_lower_path = os.path.join(version_path, ".new_lower")
-  if os.path.isdir(new_lower_path):
-    shutil.rmtree(new_lower_path)
-  os.mkdir(new_lower_path)
-  src_work_path = os.path.join(version_path, ".src_work")
-  src_mount_path = os.path.join(version_path, ".src_mount")
-  os.makedirs(src_mount_path, exist_ok=True)
-  mount_overlay(src_mount_path, src_work_path, product, version, lower_only=True)
-  try:
-    rsync(src_mount_path, new_lower_path)
-  finally:
-    umount_overlay(src_mount_path, src_work_path)
-    os.rmdir(src_mount_path)
-  lower_path = os.path.join(version_path, "lower")
-  shutil.rmtree(lower_path)
-  shutil.move(new_lower_path, lower_path)
-  write_parent(product, version, None)
+  check_product(product)
+  with Lock(product):
+    check_failed(product)
+    if not version_exists(product, version):
+      raise Exception("version does not exist")
+    if is_version_used(product, version):
+      raise Exception("version is in use, unselect first")
+    if not read_parent(product, version):
+      raise Exception("version does not have parent")
+    version_path = os.path.join(storage_root, product, version)
+    new_lower_path = os.path.join(version_path, ".new_lower")
+    if os.path.isdir(new_lower_path):
+      shutil.rmtree(new_lower_path)
+    os.mkdir(new_lower_path)
+    src_work_path = os.path.join(version_path, ".src_work")
+    src_mount_path = os.path.join(version_path, ".src_mount")
+    os.makedirs(src_mount_path, exist_ok=True)
+    mount_overlay(src_mount_path, src_work_path, product, version, lower_only=True)
+    try:
+      rsync(src_mount_path, new_lower_path)
+    finally:
+      umount_overlay(src_mount_path, src_work_path)
+      os.rmdir(src_mount_path)
+    lower_path = os.path.join(version_path, "lower")
+    shutil.rmtree(lower_path)
+    shutil.move(new_lower_path, lower_path)
+    write_parent(product, version, None)
 
 
 def select(product, version):
-  if not version_exists(product, version):
-    raise Exception("version does not exist")
-  if is_product_used(product):
-    unselect(product)
-  mount_path = os.path.join(products_root, product)
-  product_path = os.path.join(storage_root, product)
-  work_path = os.path.join(product_path, ".work")
-  mount_overlay(mount_path, work_path, product, version)
+  check_product(product)
+  with Lock(product):
+    check_failed(product)
+    if not version_exists(product, version):
+      raise Exception("version does not exist")
+    mount_path = os.path.join(products_root, product)
+    work_path = os.path.join(storage_root, product, ".work")
+    if is_product_used(product):
+      umount_overlay(mount_path, work_path)
+    mount_overlay(mount_path, work_path, product, version)
 
 
 def unselect(product):
-  if not is_product_used(product):
-    raise Exception("no version is selected")
-  mount_path = os.path.join(products_root, product)
-  work_path = os.path.join(storage_root, product, ".work")
-  umount_overlay(mount_path, work_path)
+  check_product(product)
+  with Lock(product):
+    check_failed(product)
+    if not is_product_used(product):
+      raise Exception("no version is selected")
+    mount_path = os.path.join(products_root, product)
+    work_path = os.path.join(storage_root, product, ".work")
+    umount_overlay(mount_path, work_path)
 
 
 def which(product):
-  for mount in read_mounts():
-    if mount[0] == product:
-      print(mount[1])
+  check_product(product)
+  with Lock(product):
+    check_failed(product)
+    for mount in read_mounts():
+      if mount[0] == product:
+        print(mount[1])
 
 
 def commit(product, version):
-  if not version_exists(product, version):
-    raise Exception("version does not exist")
-  if is_version_used(product, version):
-    raise Exception("version is in use, unselect first")
-  if is_parent(product, version):
-    raise Exception("version is parent, detach first")
-  version_path = os.path.join(storage_root, product, version)
-  src_work_path = os.path.join(version_path, ".src_work")
-  src_mount_path = os.path.join(version_path, ".src_mount")
-  dst_work_path = os.path.join(version_path, ".dst_work")
-  dst_mount_path = os.path.join(version_path, ".dst_mount")
-  os.makedirs(src_mount_path, exist_ok=True)
-  os.makedirs(dst_mount_path, exist_ok=True)
-  mount_overlay(src_mount_path, src_work_path, product, version)
-  mount_overlay(dst_mount_path, dst_work_path, product, version, write_lower=True)
-  try:
-    rsync(src_mount_path, dst_mount_path)
-  finally:
-    umount_overlay(src_mount_path, src_work_path)
-    umount_overlay(dst_mount_path, dst_work_path)
-    os.rmdir(src_mount_path)
-    os.rmdir(dst_mount_path)
-  upper_path = os.path.join(version_path, "upper")
-  recreate_empty(upper_path)
+  check_product(product)
+  with Lock(product):
+    check_failed(product)
+    if not version_exists(product, version):
+      raise Exception("version does not exist")
+    if is_version_used(product, version):
+      raise Exception("version is in use, unselect first")
+    if is_parent(product, version):
+      raise Exception("version is parent, detach first")
+    version_path = os.path.join(storage_root, product, version)
+    src_work_path = os.path.join(version_path, ".src_work")
+    src_mount_path = os.path.join(version_path, ".src_mount")
+    dst_work_path = os.path.join(version_path, ".dst_work")
+    dst_mount_path = os.path.join(version_path, ".dst_mount")
+    os.makedirs(src_mount_path, exist_ok=True)
+    os.makedirs(dst_mount_path, exist_ok=True)
+    mount_overlay(src_mount_path, src_work_path, product, version)
+    mount_overlay(dst_mount_path, dst_work_path, product, version, write_lower=True)
+    try:
+      rsync(src_mount_path, dst_mount_path)
+    finally:
+      umount_overlay(src_mount_path, src_work_path)
+      umount_overlay(dst_mount_path, dst_work_path)
+      os.rmdir(src_mount_path)
+      os.rmdir(dst_mount_path)
+    upper_path = os.path.join(version_path, "upper")
+    recreate_empty(upper_path)
 
 
 def undo(product, version):
-  if not version_exists(product, version):
-    raise Exception("version does not exist")
-  if is_version_used(product, version):
-    raise Exception("version is in use, unselect first")
-  version_path = os.path.join(storage_root, product, version)
-  upper_path = os.path.join(version_path, "upper")
-  recreate_empty(upper_path)
+  check_product(product)
+  with Lock(product):
+    check_failed(product)
+    if not version_exists(product, version):
+      raise Exception("version does not exist")
+    if is_version_used(product, version):
+      raise Exception("version is in use, unselect first")
+    version_path = os.path.join(storage_root, product, version)
+    upper_path = os.path.join(version_path, "upper")
+    recreate_empty(upper_path)
 
 
 def main():
@@ -349,61 +406,51 @@ def main():
     if command == "create":
       product = get_argument(2)
       version = get_argument(3)
-      check_product(product)
       create(product, version)
       return
     if command == "duplicate":
       product = get_argument(2)
       version = get_argument(3)
       parent = get_argument(4)
-      check_product(product)
       duplicate(product, version, parent)
       return
     if command == "delete":
       product = get_argument(2)
       version = get_argument(3)
-      check_product(product)
       delete(product, version)
       return
     if command == "derive":
       product = get_argument(2)
       version = get_argument(3)
       parent = get_argument(4)
-      check_product(product)
       derive(product, version, parent)
       return
     if command == "detach":
       product = get_argument(2)
       version = get_argument(3)
-      check_product(product)
       detach(product, version)
       return
     if command == "select":
       product = get_argument(2)
       version = get_argument(3)
-      check_product(product)
       select(product, version)
       return
     if command == "unselect":
       product = get_argument(2)
-      check_product(product)
       unselect(product)
       return
     if command == "which":
       product = get_argument(2)
-      check_product(product)
       which(product)
       return
     if command == "commit":
       product = get_argument(2)
       version = get_argument(3)
-      check_product(product)
       commit(product, version)
       return
     if command == "undo":
       product = get_argument(2)
       version = get_argument(3)
-      check_product(product)
       undo(product, version)
       return
     raise Exception("unknown command")
